@@ -8,9 +8,10 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+import app.db.models  # noqa: F401 — registers all ORM models
+
 # Import all models so Alembic can detect them
 from app.db.base import Base  # noqa: F401
-import app.db.models  # noqa: F401 — registers all ORM models
 
 config = context.config
 
