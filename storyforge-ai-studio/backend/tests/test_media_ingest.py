@@ -266,3 +266,60 @@ def test_media_preview_url_owner_only(
     got = client.get(r.json()["url"])
     assert got.status_code == 200 and got.content == sample_video.read_bytes()
     assert client.post(url, headers=bob).status_code == 404
+
+
+def test_probe_timeout_keeps_original_and_can_be_retried(
+    client: TestClient, alice, make_project, sample_video: Path, storage_root: Path, monkeypatch
+) -> None:
+    """A slow server must never destroy the user's upload."""
+    import app.services.ingest as ingest
+    from app.media.probe import MediaProbeTimeout
+
+    real_probe = ingest.probe
+
+    def slow_probe(path, timeout=60):
+        raise MediaProbeTimeout("ffprobe timed out analysing the file.")
+
+    pid = make_project(alice)
+    data = sample_video.read_bytes()
+    grant = _grant(client, alice, pid, len(data)).json()
+    client.put(grant["upload_url"], content=data)
+    body = {"media_asset_id": grant["media_asset_id"]}
+
+    monkeypatch.setattr(ingest, "probe", slow_probe)
+    first = client.post(f"/api/v1/projects/{pid}/media/complete", json=body, headers=alice).json()
+    job = client.get(f"/api/v1/jobs/{first['id']}", headers=alice).json()
+    assert job["status"] == "failed" and job["retryable"] is True
+    assert "try again" in job["message"].lower()
+    assert [p for p in storage_root.rglob("original") if p.is_file()], "original was deleted"
+    asset = client.get(f"/api/v1/projects/{pid}/media", headers=alice).json()[0]
+    assert asset["status"] == "uploaded"
+
+    monkeypatch.setattr(ingest, "probe", real_probe)
+    second = client.post(f"/api/v1/projects/{pid}/media/complete", json=body, headers=alice).json()
+    assert second["id"] == first["id"]  # same job lineage, next attempt
+    job = client.get(f"/api/v1/jobs/{first['id']}", headers=alice).json()
+    assert job["status"] == "completed" and job["retryable"] is False
+    asset = client.get(f"/api/v1/projects/{pid}/media", headers=alice).json()[0]
+    assert asset["status"] == "ready"
+
+
+def test_probe_timeout_retries_are_bounded(
+    client: TestClient, alice, make_project, sample_video: Path, monkeypatch
+) -> None:
+    import app.services.ingest as ingest
+    from app.media.probe import MediaProbeTimeout
+
+    def slow_probe(path, timeout=60):
+        raise MediaProbeTimeout("timeout")
+
+    monkeypatch.setattr(ingest, "probe", slow_probe)
+    pid = make_project(alice)
+    data = sample_video.read_bytes()
+    grant = _grant(client, alice, pid, len(data)).json()
+    client.put(grant["upload_url"], content=data)
+    body = {"media_asset_id": grant["media_asset_id"]}
+    for _ in range(6):
+        r = client.post(f"/api/v1/projects/{pid}/media/complete", json=body, headers=alice).json()
+    job = client.get(f"/api/v1/jobs/{r['id']}", headers=alice).json()
+    assert job["retryable"] is False  # max_retries (3) exhausted: no endless loop

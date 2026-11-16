@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     signed_url_ttl_seconds: int = 300
     default_media_retention_days: int = 7
     max_concurrent_jobs_per_user: int = 1
+    ffprobe_timeout_seconds: int = 60
 
     # AI providers (mock = safe demo/test mode — never real output)
     transcription_provider: str = "mock"

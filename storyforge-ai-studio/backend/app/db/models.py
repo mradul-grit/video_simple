@@ -80,6 +80,9 @@ class JobStatus(enum.StrEnum):
     retrying = "retrying"
 
 
+RETRYABLE_ERROR_CODES = frozenset({"PROBE_TIMEOUT"})
+
+
 class CaptionType(enum.StrEnum):
     verbatim = "verbatim"
     editorial = "editorial"
@@ -252,6 +255,15 @@ class Job(Base):
     project: Mapped[Project] = relationship("Project", back_populates="jobs")
 
     __table_args__ = (UniqueConstraint("project_id", "idempotency_key", name="uq_job_idempotency"),)
+
+    @property
+    def retryable(self) -> bool:
+        """Failed for a transient reason and has retries left (exposed in job status)."""
+        return (
+            self.status == JobStatus.failed
+            and self.error_code in RETRYABLE_ERROR_CODES
+            and self.retry_count < self.max_retries
+        )
 
 
 # ---------------------------------------------------------------------------

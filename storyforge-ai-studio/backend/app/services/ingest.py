@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db.models import Job, JobStatus, MediaAsset, MediaStatus
-from app.media.probe import MediaProbeError, probe, validate_file_signature
+from app.media.probe import MediaProbeError, MediaProbeTimeout, probe, validate_file_signature
 from app.storage.local import LocalFilesystemStorage
 
 _CHUNK = 1024 * 1024
@@ -62,7 +62,17 @@ def validate_media_asset(
 
     try:
         validate_file_signature(path, asset.content_type)
-        meta = probe(path)
+        meta = probe(path, timeout=settings.ffprobe_timeout_seconds)
+    except MediaProbeTimeout:
+        # Infrastructure problem: keep the original so validation can be retried.
+        asset.status = MediaStatus.uploaded
+        if job is not None:
+            job.status = JobStatus.failed
+            job.error_code = "PROBE_TIMEOUT"
+            job.message = "Checking your video took too long. Please try again in a moment."
+            job.progress = 100
+        db.commit()
+        return asset
     except MediaProbeError as exc:
         storage.delete_object(key)
         _fail(db, asset, job, str(exc), "INVALID_MEDIA")

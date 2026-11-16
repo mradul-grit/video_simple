@@ -102,19 +102,25 @@ def complete_upload(
 
     key = f"validate:{asset.id}"
     existing = get_job_by_idempotency(db, project_id, key)
-    if existing is not None:
+    if existing is not None and not (existing.retryable and asset.status == MediaStatus.uploaded):
         return JobStatusResponse.model_validate(existing)
 
     if asset.status != MediaStatus.uploaded:
         raise HTTPException(409, f"Media asset is {asset.status.value}; upload it first.")
 
-    job = create_job(
-        db,
-        project_id=project_id,
-        job_type=JobType.media_validate.value,
-        media_asset_id=asset.id,
-        idempotency_key=key,
-    )
+    if existing is not None:  # same logical job, next attempt
+        job = existing
+        update_job(
+            db, job, retry_count=job.retry_count + 1, error_code=None, message=None, progress=0
+        )
+    else:
+        job = create_job(
+            db,
+            project_id=project_id,
+            job_type=JobType.media_validate.value,
+            media_asset_id=asset.id,
+            idempotency_key=key,
+        )
     db.commit()
 
     update_job(db, job, status=JobStatus.queued, celery_task_id=job.id)

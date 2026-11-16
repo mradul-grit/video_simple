@@ -17,6 +17,10 @@ class MediaProbeError(ValueError):
     """Raised when ffprobe cannot parse or the file is invalid."""
 
 
+class MediaProbeTimeout(MediaProbeError):
+    """ffprobe did not finish in time. A server problem, not proof the file is bad."""
+
+
 @dataclass(frozen=True)
 class MediaMetadata:
     duration_seconds: float
@@ -68,7 +72,7 @@ def validate_file_signature(path: Path, declared_content_type: str | None) -> No
     )
 
 
-def probe(path: Path) -> MediaMetadata:
+def probe(path: Path, timeout: int = 60) -> MediaMetadata:
     """Run ffprobe and return structured MediaMetadata.
 
     Raises MediaProbeError if ffprobe fails or returns unexpected output.
@@ -89,13 +93,13 @@ def probe(path: Path) -> MediaMetadata:
             cmd,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=timeout,
             check=False,
         )
     except FileNotFoundError as exc:
         raise MediaProbeError("ffprobe not found. Install FFmpeg to process media.") from exc
     except subprocess.TimeoutExpired as exc:
-        raise MediaProbeError("ffprobe timed out analysing the file.") from exc
+        raise MediaProbeTimeout("ffprobe timed out analysing the file.") from exc
 
     if result.returncode != 0:
         raise MediaProbeError(f"ffprobe failed (exit {result.returncode})")

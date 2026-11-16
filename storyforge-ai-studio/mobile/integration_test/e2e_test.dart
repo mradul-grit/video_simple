@@ -1,8 +1,9 @@
 // On-device end-to-end test against a real StoryForge backend.
 //
-// Run with scripts/run-device-e2e.ps1, which starts the stack, copies a test clip
-// into the app's private files dir, and runs `flutter drive` (screenshots land in
-// mobile/build/e2e_screenshots). Only the system file picker is replaced.
+// Run with scripts/run-device-e2e.ps1, which serves a generated test clip over HTTP and runs
+// `flutter drive` (screenshots land in
+// mobile/build/e2e_screenshots). Only the system file picker is replaced; it returns a clip the
+// test downloads from the host first.
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -14,7 +15,21 @@ import 'package:storyforge_mobile/core/providers.dart';
 import 'package:storyforge_mobile/features/projects/project_screen.dart';
 import 'package:video_player/video_player.dart';
 
-const clipPath = String.fromEnvironment('SF_E2E_CLIP', defaultValue: '/data/user/0/dev.storyforge.storyforge_mobile/files/e2e_clip.mp4');
+/// Served by scripts/run-device-e2e.ps1 from the host (10.0.2.2 is the host from the emulator).
+const clipUrl = String.fromEnvironment('SF_E2E_CLIP_URL', defaultValue: 'http://10.0.2.2:8765/e2e_clip.mp4');
+
+Future<File> downloadClip() async {
+  final client = HttpClient();
+  try {
+    final res = await (await client.getUrl(Uri.parse(clipUrl))).close();
+    if (res.statusCode != 200) throw TestFailure('clip server returned ${res.statusCode}');
+    final file = File('${Directory.systemTemp.path}/e2e_clip.mp4');
+    await res.pipe(file.openWrite());
+    return file;
+  } finally {
+    client.close();
+  }
+}
 
 Future<void> pumpUntil(WidgetTester tester, Finder finder, {Duration timeout = const Duration(seconds: 60)}) async {
   final end = DateTime.now().add(timeout);
@@ -34,8 +49,8 @@ void main() {
   }
 
   testWidgets('record-to-export flow against the real backend', (tester) async {
-    final clip = File(clipPath);
-    expect(clip.existsSync(), isTrue, reason: 'push the test clip first (see scripts/run-device-e2e.ps1)');
+    final clip = await downloadClip();
+    expect(clip.lengthSync(), greaterThan(10000));
     await SecureTokenStore().clear(); // start signed out
     await binding.convertFlutterSurfaceToImage();
 
@@ -70,13 +85,13 @@ void main() {
     await pumpUntil(tester, find.text('Upload this video?'));
     await shot(tester, '05_consent');
     await tester.tap(find.text('Upload'));
-    await pumpUntil(tester, find.text('Analyse video'), timeout: const Duration(seconds: 90));
+    await pumpUntil(tester, find.text('Analyse video'), timeout: const Duration(minutes: 4));
     expect(find.text('Original kept'), findsOneWidget);
     await shot(tester, '06_uploaded');
 
     // Analyse (mock providers on the dev server; the demo banner must be visible).
     await tester.tap(find.text('Analyse video'));
-    await pumpUntil(tester, find.text('Open editor'), timeout: const Duration(seconds: 90));
+    await pumpUntil(tester, find.text('Open editor'), timeout: const Duration(minutes: 4));
     expect(find.textContaining('Demo mode'), findsOneWidget);
     await shot(tester, '07_analysed');
 
@@ -94,7 +109,7 @@ void main() {
 
     // Export and wait for the worker's ffmpeg render + ffprobe verification.
     await tester.tap(find.text('Export video'));
-    await pumpUntil(tester, find.text('Ready'), timeout: const Duration(minutes: 4));
+    await pumpUntil(tester, find.text('Ready'), timeout: const Duration(minutes: 8));
     await shot(tester, '10_exports');
 
     // Play the export through its short-lived signed URL.
