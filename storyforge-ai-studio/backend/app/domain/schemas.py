@@ -11,6 +11,20 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+ALLOWED_VIDEO_CONTENT_TYPES: frozenset[str] = frozenset(
+    {
+        "video/mp4",
+        "video/quicktime",
+        "video/webm",
+        "video/x-matroska",
+        "video/avi",
+        "video/x-msvideo",
+        "video/mpeg",
+        "video/x-ms-wmv",
+    }
+)
+
+
 # ---------------------------------------------------------------------------
 # Shared base
 # ---------------------------------------------------------------------------
@@ -122,16 +136,7 @@ class UploadIntentRequest(BaseModel):
     @field_validator("content_type")
     @classmethod
     def validate_content_type(cls, v: str) -> str:
-        allowed = {
-            "video/mp4",
-            "video/quicktime",
-            "video/webm",
-            "video/x-matroska",
-            "video/avi",
-            "video/x-msvideo",
-            "video/mpeg",
-            "video/x-ms-wmv",
-        }
+        allowed = ALLOWED_VIDEO_CONTENT_TYPES
         if v not in allowed:
             raise ValueError(
                 f"Content type {v!r} is not supported. Allowed: {', '.join(sorted(allowed))}"

@@ -84,3 +84,15 @@ def test_nested_routes_do_not_leak_other_users_projects(
     pid = make_project(alice)
     for path in ("media", "analysis", "visual-suggestions", "edit-manifest", "exports"):
         assert client.get(f"/api/v1/projects/{pid}/{path}", headers=bob).status_code == 404, path
+
+
+def test_system_info_is_public_and_has_no_secrets(client: TestClient) -> None:
+    r = client.get("/api/v1/system/info")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["providers"]["demo_mode"] is True  # default providers are mock
+    assert "video/mp4" in body["accepted_content_types"]
+    assert body["max_upload_bytes"] > 0
+    flat = r.text.lower()
+    for word in ("secret", "password", "key", "token", "postgresql", "redis://"):
+        assert word not in flat, word

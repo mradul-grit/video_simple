@@ -16,6 +16,7 @@ from app.api.v1.media import router as media_router
 from app.api.v1.projects import router as projects_router
 from app.api.v1.renders import router as renders_router
 from app.api.v1.storage import router as storage_router
+from app.api.v1.system import router as system_router
 from app.api.v1.visual import router as visual_router
 from app.config import settings
 
@@ -56,6 +57,7 @@ async def attach_request_id(request: Request, call_next) -> Response:
 _V1 = settings.api_v1_prefix
 
 app.include_router(health_router, prefix=_V1)
+app.include_router(system_router, prefix=_V1)
 app.include_router(auth_router, prefix=_V1)
 app.include_router(projects_router, prefix=_V1)
 app.include_router(media_router, prefix=_V1)
