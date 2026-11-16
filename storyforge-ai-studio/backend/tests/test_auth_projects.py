@@ -96,3 +96,20 @@ def test_system_info_is_public_and_has_no_secrets(client: TestClient) -> None:
     flat = r.text.lower()
     for word in ("secret", "password", "key", "token", "postgresql", "redis://"):
         assert word not in flat, word
+
+
+def test_settings_refuse_default_secrets_outside_development() -> None:
+    import pytest as _pytest
+
+    from app.config import Settings
+
+    with _pytest.raises(ValueError, match="SECRET_KEY"):
+        Settings(app_env="production", _env_file=None)
+    ok = Settings(
+        app_env="production",
+        secret_key="x" * 40,
+        storage_signing_secret="y" * 40,
+        _env_file=None,
+    )
+    assert ok.app_env == "production"
+    assert Settings(app_env="development", _env_file=None).secret_key  # dev defaults allowed

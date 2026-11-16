@@ -145,7 +145,12 @@ def media_preview_url(
     """Short-lived link for the owner to play their original in the editor."""
     _assert_project(db, project_id, current_user.id)
     asset = get_media_asset_owned_by(db, media_id, current_user.id)
-    if asset is None or asset.project_id != project_id or asset.status != MediaStatus.ready:
+    if (
+        asset is None
+        or asset.project_id != project_id
+        or asset.status != MediaStatus.ready
+        or not asset.storage_key
+    ):
         raise HTTPException(404, "Media asset not found")
     ttl = settings.signed_url_ttl_seconds
     return DownloadUrlResponse(

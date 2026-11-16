@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_DEV_SECRETS = {
+    "local_dev_insecure_secret_change_in_production",
+    "dev_insecure_secret_change_before_any_deployment",
+    "",
+}
 
 
 class Settings(BaseSettings):
@@ -65,6 +72,21 @@ class Settings(BaseSettings):
     secret_key: str = "dev_insecure_secret_change_before_any_deployment"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24  # 24 h
+
+    @model_validator(mode="after")
+    def _refuse_dev_secrets_outside_development(self) -> Settings:
+        """Signing keys must be real secrets anywhere but a developer machine."""
+        if self.app_env != "development":
+            weak = [
+                name
+                for name in ("secret_key", "storage_signing_secret")
+                if getattr(self, name) in _DEV_SECRETS or len(getattr(self, name)) < 32
+            ]
+            if weak:
+                raise ValueError(
+                    f"APP_ENV={self.app_env} needs strong values for: {', '.join(weak).upper()}"
+                )
+        return self
 
 
 @lru_cache

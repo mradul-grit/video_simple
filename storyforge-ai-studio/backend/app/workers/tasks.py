@@ -415,7 +415,7 @@ def _mock_transcript(media_asset_id: str) -> list[dict]:
 def _whisper_transcribe(media_path: Path, settings) -> list[dict]:
     """Transcribe using Faster-Whisper (real provider)."""
     try:
-        from faster_whisper import WhisperModel  # type: ignore[import]
+        from faster_whisper import WhisperModel  # type: ignore[import-not-found]
     except ImportError as exc:
         raise RuntimeError(
             "faster_whisper is not installed. "

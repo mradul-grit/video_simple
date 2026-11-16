@@ -13,9 +13,12 @@ $lint = $LASTEXITCODE
 Write-Host "== ruff format --check"
 & $py -m ruff format --check app tests
 $fmt = $LASTEXITCODE
+Write-Host "== mypy"
+& $py -m mypy app
+$types = $LASTEXITCODE
 Write-Host "== pytest"
 & $py -m pytest -q -p no:cacheprovider
 $tests = $LASTEXITCODE
 
-Write-Host "lint=$lint format=$fmt tests=$tests"
-if ($lint -ne 0 -or $fmt -ne 0 -or $tests -ne 0) { exit 1 }
+Write-Host "lint=$lint format=$fmt types=$types tests=$tests"
+if ($lint -ne 0 -or $fmt -ne 0 -or $types -ne 0 -or $tests -ne 0) { exit 1 }
