@@ -355,8 +355,8 @@ class _AnalysisSection extends ConsumerWidget {
           Text('Ready to edit', style: t.titleLarge),
           const SizedBox(height: SfSpace.xs),
           Text(
-            '${value.segments.where((s) => s.isSpeech).length} transcript segments \u00b7 '
-            '${value.cuts.length} suggested cuts \u00b7 ${value.captions.length} key-point captions',
+            '${plural(value.segments.where((s) => s.isSpeech).length, 'transcript segment')} \u00b7 '
+            '${plural(value.cuts.length, 'suggested cut')} \u00b7 ${plural(value.captions.length, 'key-point caption')}',
             style: t.bodyMedium,
           ),
           const SizedBox(height: SfSpace.lg),

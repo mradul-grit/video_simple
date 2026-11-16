@@ -16,7 +16,9 @@ Status as of 2026-11-16. A box is ticked only when the check was actually run.
       Suite also passes on PostgreSQL via `TEST_DATABASE_URL`.
 - [x] Run mypy (clean on `app/`; part of `scripts/check-backend.ps1`).
 - [x] Run Flutter format/analyze/test (`dart format`, `flutter analyze`: no issues, `flutter test`).
-- [ ] Build and run on an Android emulator or device (debug APK build in progress; not yet run on a device).
+- [x] Build and run on an Android emulator: debug APK (minSdk 23, target 35) and the on-device e2e test
+      (`scripts/run-device-e2e.ps1`) passed on an Android 35 emulator against the Docker stack.
+      Not yet run on a physical low-end device.
 - [ ] CI pipeline (deferred until commands are stable; must not need secrets).
 - [x] Record outputs and limitations (README "Known limitations"; this file).
 

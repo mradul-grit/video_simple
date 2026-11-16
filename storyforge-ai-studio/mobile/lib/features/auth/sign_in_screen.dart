@@ -59,12 +59,15 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Container(
-                      width: 56,
-                      height: 56,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(gradient: sfAccentGradient, borderRadius: BorderRadius.circular(16)),
-                      child: const Icon(Icons.auto_awesome_motion_rounded, color: SfColors.onAccent, size: 30),
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Container(
+                        width: 56,
+                        height: 56,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(gradient: sfAccentGradient, borderRadius: BorderRadius.circular(16)),
+                        child: const Icon(Icons.auto_awesome_motion_rounded, color: SfColors.onAccent, size: 30),
+                      ),
                     ),
                     const SizedBox(height: SfSpace.lg),
                     Text('Tell the story.\nWe\u2019ll help you edit it.', style: t.displaySmall),

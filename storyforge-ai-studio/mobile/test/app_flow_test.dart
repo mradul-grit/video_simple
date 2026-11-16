@@ -34,6 +34,9 @@ void main() {
     await pumpApp(tester, api: api, tokens: tokens);
 
     expect(find.text('Development sign-in'), findsOneWidget);
+    // Regression (seen on device): the logo badge stretched to the full column width.
+    final badge = find.ancestor(of: find.byIcon(Icons.auto_awesome_motion_rounded), matching: find.byType(Container));
+    expect(tester.getSize(badge.first), const Size(56, 56));
     await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
     expect(find.text('Enter a valid email'), findsOneWidget);

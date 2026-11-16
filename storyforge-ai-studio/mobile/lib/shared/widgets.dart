@@ -228,6 +228,9 @@ class SectionHeader extends StatelessWidget {
   );
 }
 
+/// `1 suggested cut`, `2 suggested cuts`.
+String plural(int n, String noun) => '$n $noun${n == 1 ? '' : 's'}';
+
 String formatDuration(double? seconds) {
   if (seconds == null) return '–';
   final s = seconds.round();

@@ -81,8 +81,10 @@ class _ExportTile extends ConsumerWidget {
         borderRadius: BorderRadius.circular(SfRadius.md),
         onTap:
             job.succeeded
+                // Root navigator: the player covers the tab bar instead of sitting inside the tab.
                 ? () => Navigator.of(
                   context,
+                  rootNavigator: true,
                 ).push(MaterialPageRoute<void>(builder: (_) => ExportPlayerScreen(title: project.title, job: job)))
                 : null,
         child: Padding(

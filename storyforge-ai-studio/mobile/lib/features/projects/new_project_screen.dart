@@ -73,7 +73,7 @@ class _NewProjectScreenState extends ConsumerState<NewProjectScreen> {
                 textCapitalization: TextCapitalization.sentences,
                 decoration: const InputDecoration(
                   labelText: 'Title',
-                  hintText: 'e.g. How a tap washer works',
+                  helperText: 'For example: How a tap washer works',
                   counterText: '',
                 ),
                 validator: (v) => (v ?? '').trim().isEmpty ? 'Give your video a title' : null,
