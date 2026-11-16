@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:dio/dio.dart';
 
@@ -286,6 +287,10 @@ class DioStoryForgeApi implements StoryForgeApi {
 }
 
 /// Poll [fetch] until [isDone] or the timeout. [isActive] lets a screen stop polling on dispose.
+///
+/// The job keeps running on the server whatever happens here, so a dropped request must not
+/// end the wait: transient failures (no connection, 5xx) are retried with a growing delay
+/// until the deadline. Client errors (4xx) are real answers and are rethrown at once.
 Future<T> pollUntil<T>(
   Future<T> Function() fetch, {
   required bool Function(T) isDone,
@@ -295,8 +300,23 @@ Future<T> pollUntil<T>(
   Duration timeout = AppConfig.pollTimeout,
 }) async {
   final deadline = DateTime.now().add(timeout);
+  var failures = 0;
   while (true) {
-    final value = await fetch();
+    final T value;
+    try {
+      value = await fetch();
+      failures = 0;
+    } on ApiException catch (e) {
+      final transient = e.statusCode == null || e.statusCode! >= 500;
+      if (!transient) rethrow;
+      if (isActive != null && !isActive()) rethrow;
+      if (DateTime.now().isAfter(deadline)) {
+        throw ApiException('Lost contact with the server. Your job keeps running there; check back later.');
+      }
+      failures++;
+      await Future<void>.delayed(interval * min(failures, 5));
+      continue;
+    }
     onUpdate?.call(value);
     if (isDone(value)) return value;
     if (isActive != null && !isActive()) return value;
