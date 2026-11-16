@@ -86,9 +86,9 @@ void main() {
     await pumpUntil(tester, find.byType(VideoPlayer), timeout: const Duration(seconds: 30));
     await shot(tester, '08_editor');
     final cut = find.widgetWithText(FilledButton, 'Cut');
-    expect(cut, findsWidgets, reason: 'the demo analysis proposes a pause cut inside the 12 s clip');
+    expect(cut, findsWidgets, reason: 'pause detection should find the 6-8 s silence');
     await tester.tap(cut.first);
-    // 12 s clip minus the 9.2-11.0 s demo pause = 10.2 s.
+    // 12 s clip with silence 6-8 s; the cut keeps 0.15 s padding each side: 12 - 1.7 = 10.3 s.
     await pumpUntil(tester, find.textContaining('Result 0:10 of 0:12'));
     await shot(tester, '09_cut_accepted');
 

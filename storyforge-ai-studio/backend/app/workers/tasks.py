@@ -103,8 +103,19 @@ def run_analysis(self: Task, job_id: str, project_id: str, media_asset_id: str) 
             beats_data.append({**b, "transcript_segment_ids": seg_ids})
         save_story_beats(db, project_id, beats_data)
 
+        # Pause cuts come from the measured audio, never from the language model.
         cuts_data = []
+        if asset.has_audio and asset.duration_seconds:
+            from app.media.pauses import detect_pauses, pause_cut_proposals
+
+            _update_job(db, job, stage="detecting_pauses", progress=75)
+            db.commit()
+            pauses = detect_pauses(media_path, asset.duration_seconds)
+            for c in pause_cut_proposals(pauses, asset.duration_seconds):
+                cuts_data.append({**c, "media_asset_id": media_asset_id})
         for c in analysis.get("cuts", []):
+            if c.get("cut_type") != "filler":
+                continue  # only filler-word cuts may come from the language model
             seg_ids = [seg_id_map[i] for i in c.get("segment_sequences", []) if i in seg_id_map]
             cuts_data.append(
                 {**c, "media_asset_id": media_asset_id, "transcript_segment_ids": seg_ids}
@@ -494,20 +505,8 @@ def _mock_story_analysis(segments: list[dict]) -> dict:
             }
         )
 
-    # Propose cuts for non-speech segments
-    cuts = []
-    for s in segments:
-        if not s.get("is_speech") and (s["end_seconds"] - s["start_seconds"]) > 1.0:
-            cuts.append(
-                {
-                    "start_seconds": s["start_seconds"],
-                    "end_seconds": s["end_seconds"],
-                    "reason": "[DEMO] Silence / pause detected",
-                    "cut_type": "pause",
-                    "confidence": 0.80,
-                    "segment_sequences": [s["sequence"]],
-                }
-            )
+    # Pause cuts are measured from the audio (app.media.pauses), not invented here.
+    cuts: list[dict] = []
 
     # Editorial captions grounded in speech segments
     captions = []

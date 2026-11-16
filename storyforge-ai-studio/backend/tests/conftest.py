@@ -63,6 +63,23 @@ def sample_video(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="session")
+def paused_video(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """4 s clip whose audio is silent from 1.5 s to 2.8 s (a real, measurable pause)."""
+    out = tmp_path_factory.mktemp("media_paused") / "paused.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-v", "error",
+            "-f", "lavfi", "-i", "testsrc=duration=4:size=320x240:rate=25",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+            "-af", "volume='if(between(t,1.5,2.8),0,1)':eval=frame",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(out),
+        ],
+        check=True,
+    )  # fmt: skip
+    return out
+
+
+@pytest.fixture(scope="session")
 def silent_video(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A 2 s clip with no audio stream (must still render)."""
     out = tmp_path_factory.mktemp("media_silent") / "silent.mp4"

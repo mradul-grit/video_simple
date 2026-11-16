@@ -9,9 +9,9 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture()
-def ready_project(client: TestClient, alice, make_project, upload_video, sample_video: Path):
+def ready_project(client: TestClient, alice, make_project, upload_video, paused_video: Path):
     pid = make_project(alice)
-    asset = upload_video(alice, pid, sample_video)
+    asset = upload_video(alice, pid, paused_video)
     assert asset["status"] == "ready"
     return pid, asset
 

@@ -12,9 +12,9 @@ $adbArgs = @(); if ($Device) { $adbArgs = @("-s", $Device) }
 $ready = Invoke-RestMethod http://localhost:8000/api/v1/health/ready
 if ($ready.status -ne "ready") { throw "Backend not ready: $($ready | ConvertTo-Json -Compress)" }
 
-# 12 s portrait clip with a tone (the demo analysis proposes a 9.2-11.0 s pause cut).
+# 12 s portrait clip; the tone is silent from 6 s to 8 s, so pause detection proposes one cut.
 $clip = Join-Path $env:TEMP "e2e_clip.mp4"
-& ffmpeg -y -v error -f lavfi -i "testsrc=duration=12:size=720x1280:rate=30" -f lavfi -i "sine=frequency=330:duration=12" -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest $clip
+& ffmpeg -y -v error -f lavfi -i "testsrc=duration=12:size=720x1280:rate=30" -f lavfi -i "sine=frequency=330:duration=12" -af "volume='if(between(t,6,8),0,1)':eval=frame" -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest $clip
 if ($LASTEXITCODE -ne 0) { throw "ffmpeg failed" }
 
 # Install the debug app so its private files dir exists, then copy the clip into it with run-as.
