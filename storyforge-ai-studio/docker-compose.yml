@@ -43,6 +43,7 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - ./EDIT_MANIFEST.schema.json:/app/EDIT_MANIFEST.schema.json:ro
       - media_data:/app/media_data
     depends_on:
       postgres:
@@ -64,6 +65,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./backend:/app
+      - ./EDIT_MANIFEST.schema.json:/app/EDIT_MANIFEST.schema.json:ro
       - media_data:/app/media_data
     depends_on:
       postgres:
