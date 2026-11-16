@@ -54,12 +54,16 @@ void main() {
     await SecureTokenStore().clear(); // start signed out
     await binding.convertFlutterSurfaceToImage();
 
-    await tester.pumpWidget(ProviderScope(
-      overrides: [
-        videoPickerProvider.overrideWithValue(() async => (path: clip.path, name: 'e2e_clip.mp4', size: clip.lengthSync())),
-      ],
-      child: const StoryForgeApp(),
-    ));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          videoPickerProvider.overrideWithValue(
+            () async => (path: clip.path, name: 'e2e_clip.mp4', size: clip.lengthSync()),
+          ),
+        ],
+        child: const StoryForgeApp(),
+      ),
+    );
 
     // Sign in (development endpoint on the local server).
     await pumpUntil(tester, find.text('Development sign-in'));

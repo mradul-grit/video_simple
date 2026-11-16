@@ -1,1 +1,5 @@
 include: package:flutter_lints/flutter.yaml
+
+# Used by `dart format` (Dart 3.7+) locally and in CI.
+formatter:
+  page_width: 120
