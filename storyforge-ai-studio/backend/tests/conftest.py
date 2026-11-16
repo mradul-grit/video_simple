@@ -7,6 +7,7 @@ ffmpeg/ffprobe). Nothing here needs Postgres, Redis or network access.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import uuid
@@ -88,14 +89,23 @@ def silent_video(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture()
 def session_factory(monkeypatch: pytest.MonkeyPatch) -> Iterator[sessionmaker[Session]]:
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    # Default: in-memory SQLite. Set TEST_DATABASE_URL to run the same suite on PostgreSQL
+    # (use a throwaway database: tables are dropped before and after every test).
+    url = os.environ.get("TEST_DATABASE_URL")
+    if url:
+        engine = create_engine(url)
+        Base.metadata.drop_all(engine)
+    else:
+        engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     # Workers open their own sessions through app.db.base.SessionLocal.
     monkeypatch.setattr(db_base, "SessionLocal", factory)
     yield factory
+    if url:
+        Base.metadata.drop_all(engine)
     engine.dispose()
 
 
