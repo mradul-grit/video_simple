@@ -1,0 +1,14 @@
+__pycache__
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.venv
+venv
+.git
+.env
+media_data
+models
+*.mp4
+*.mov
+*.wav
+*.mp3

@@ -1,0 +1,11 @@
+{
+  "Rules": [
+    {
+      "ID": "ExpireTemporaryUploadsAfterSevenDays",
+      "Status": "Disabled",
+      "Filter": {"Prefix": "temporary/"},
+      "Expiration": {"Days": 7},
+      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 2}
+    }
+  ]
+}

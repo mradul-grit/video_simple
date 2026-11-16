@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://storyforge.invalid/schemas/edit-manifest-v1.json",
+  "title": "StoryForge Edit Manifest",
+  "description": "Non-destructive, versioned edit instructions. Original assets are immutable.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "project_id", "version", "output", "tracks"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "project_id": {"type": "string", "format": "uuid"},
+    "version": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "fps", "container", "video_codec", "audio_codec"],
+      "properties": {
+        "width": {"type": "integer", "const": 1080},
+        "height": {"type": "integer", "const": 1920},
+        "fps": {"type": "number", "minimum": 15, "maximum": 60},
+        "container": {"const": "mp4"},
+        "video_codec": {"const": "h264"},
+        "audio_codec": {"const": "aac"},
+        "quality_preset": {"type": "string", "enum": ["preview", "balanced", "high"]}
+      }
+    },
+    "tracks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "type", "items"],
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "type": {"type": "string", "enum": ["video", "transcript", "editorial_caption", "visual", "audio"]},
+          "muted": {"type": "boolean", "default": false},
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["id", "start", "end"],
+              "properties": {
+                "id": {"type": "string", "format": "uuid"},
+                "source_media_id": {"type": "string", "format": "uuid"},
+                "start": {"type": "number", "minimum": 0},
+                "end": {"type": "number", "exclusiveMinimum": 0},
+                "text": {"type": "string"},
+                "source_segment_ids": {"type": "array", "items": {"type": "string", "format": "uuid"}},
+                "asset_id": {"type": "string", "format": "uuid"},
+                "layout": {"type": "string", "enum": ["picture_in_picture", "full_frame_cutaway"]},
+                "position": {"type": "object", "properties": {"x": {"type": "number", "minimum": 0, "maximum": 1}, "y": {"type": "number", "minimum": 0, "maximum": 1}}, "additionalProperties": false},
+                "scale": {"type": "number", "minimum": 0.05, "maximum": 2},
+                "opacity": {"type": "number", "minimum": 0, "maximum": 1},
+                "transition": {"type": "string", "enum": ["none", "fade", "slide", "zoom"]},
+                "accepted_by_user": {"type": "boolean"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "audio_adjustments": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "noise_reduction": {"type": "string", "enum": ["off", "light", "standard"]},
+        "high_pass_hz": {"type": "integer", "minimum": 0, "maximum": 300},
+        "loudness_target_lufs": {"type": "number", "minimum": -24, "maximum": -12},
+        "limiter_enabled": {"type": "boolean"}
+      }
+    },
+    "color_adjustments": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exposure": {"type": "number", "minimum": -2, "maximum": 2},
+        "contrast": {"type": "number", "minimum": 0.5, "maximum": 1.5},
+        "saturation": {"type": "number", "minimum": 0, "maximum": 2},
+        "temperature": {"type": "number", "minimum": -100, "maximum": 100}
+      }
+    }
+  }
+}
