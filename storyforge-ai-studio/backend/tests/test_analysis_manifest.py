@@ -255,3 +255,44 @@ def test_manifest_save_does_not_mutate_caller_payload(
     snapshot = copy.deepcopy(m)
     _save(client, alice, pid, m)
     assert m == snapshot
+
+
+def test_schema_loader_rejects_empty_or_missing_file(tmp_path, monkeypatch) -> None:
+    from app.config import settings
+    from app.domain import manifest_rules
+
+    empty = tmp_path / "EDIT_MANIFEST.schema.json"
+    empty.write_text("")
+    monkeypatch.setattr(settings, "manifest_schema_path", str(empty))
+    manifest_rules.load_schema.cache_clear()
+    try:
+        with pytest.raises(manifest_rules.SchemaNotFoundError):
+            manifest_rules.load_schema()
+        monkeypatch.setattr(settings, "manifest_schema_path", str(tmp_path / "missing.json"))
+        manifest_rules.load_schema.cache_clear()
+        with pytest.raises(manifest_rules.SchemaNotFoundError):
+            manifest_rules.load_schema()
+    finally:
+        monkeypatch.undo()
+        manifest_rules.load_schema.cache_clear()
+    assert manifest_rules.load_schema()["title"] == "StoryForge Edit Manifest"
+
+
+def test_unreadable_schema_returns_clean_500(
+    client: TestClient, alice, ready_project, tmp_path, monkeypatch
+) -> None:
+    from app.config import settings
+    from app.domain import manifest_rules
+
+    pid, asset = ready_project
+    bad = tmp_path / "s.json"
+    bad.write_text("")
+    monkeypatch.setattr(settings, "manifest_schema_path", str(bad))
+    manifest_rules.load_schema.cache_clear()
+    try:
+        r = _save(client, alice, pid, _manifest(pid, asset["id"]))
+        assert r.status_code == 500
+        assert r.json()["detail"] == "Manifest schema is not available on the server"
+    finally:
+        monkeypatch.undo()
+        manifest_rules.load_schema.cache_clear()

@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     local_storage_root: str = "./media_data"
     storage_signing_secret: str = "local_dev_insecure_secret_change_in_production"
 
+    # Canonical edit manifest schema; empty = search next to backend/ and the repo root
+    manifest_schema_path: str = ""
+
     # Upload / processing safeguards
     max_upload_bytes: int = 1_073_741_824  # 1 GB
     max_video_duration_seconds: int = 900  # 15 min

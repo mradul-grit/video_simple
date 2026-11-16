@@ -17,6 +17,7 @@ from app.api.deps import CurrentUser, DbSession
 from app.config import settings
 from app.db.models import JobStatus, JobType, MediaStatus
 from app.domain.schemas import (
+    DownloadUrlResponse,
     JobStatusResponse,
     MediaAssetOut,
     UploadCompleteRequest,
@@ -135,6 +136,22 @@ def complete_upload(
 def list_media(project_id: str, current_user: CurrentUser, db: DbSession) -> list[MediaAssetOut]:
     _assert_project(db, project_id, current_user.id)
     return [MediaAssetOut.model_validate(a) for a in list_media_assets(db, project_id)]
+
+
+@router.post("/{media_id}/preview-url", response_model=DownloadUrlResponse)
+def media_preview_url(
+    project_id: str, media_id: str, current_user: CurrentUser, db: DbSession
+) -> DownloadUrlResponse:
+    """Short-lived link for the owner to play their original in the editor."""
+    _assert_project(db, project_id, current_user.id)
+    asset = get_media_asset_owned_by(db, media_id, current_user.id)
+    if asset is None or asset.project_id != project_id or asset.status != MediaStatus.ready:
+        raise HTTPException(404, "Media asset not found")
+    ttl = settings.signed_url_ttl_seconds
+    return DownloadUrlResponse(
+        url=get_storage().signed_url(asset.storage_key, ttl),
+        expires_at=datetime.now(UTC) + timedelta(seconds=ttl),
+    )
 
 
 @router.delete("/{media_id}", status_code=204)

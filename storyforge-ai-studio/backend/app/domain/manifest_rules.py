@@ -26,20 +26,30 @@ class SchemaNotFoundError(RuntimeError):
 
 
 def _candidate_paths() -> list[Path]:
+    from app.config import settings
+
     here = Path(__file__).resolve()
     # backend/app/domain/manifest_rules.py -> backend/ is parents[2], repo root parents[3]
-    return [here.parents[2] / SCHEMA_FILENAME, here.parents[3] / SCHEMA_FILENAME]
+    found = [here.parents[2] / SCHEMA_FILENAME, here.parents[3] / SCHEMA_FILENAME]
+    if settings.manifest_schema_path:
+        return [Path(settings.manifest_schema_path)]  # explicit config wins, no fallback
+    return found
 
 
 @lru_cache
 def load_schema() -> dict[str, Any]:
-    """Load the canonical schema. Missing schema is an error, never a silent skip."""
+    """Load the canonical schema. A missing or unreadable schema is an error, never a skip."""
     for path in _candidate_paths():
-        if path.is_file():
-            return json.loads(path.read_text(encoding="utf-8"))
-    raise SchemaNotFoundError(
-        f"{SCHEMA_FILENAME} not found next to backend/ or at the repository root."
-    )
+        if not path.is_file():
+            continue
+        try:
+            schema = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise SchemaNotFoundError(f"{path} is not a readable JSON schema") from exc
+        if not isinstance(schema, dict) or "$schema" not in schema:
+            raise SchemaNotFoundError(f"{path} does not look like a JSON schema")
+        return schema
+    raise SchemaNotFoundError(f"{SCHEMA_FILENAME} not found (set MANIFEST_SCHEMA_PATH).")
 
 
 def validate_schema(manifest: Mapping[str, Any]) -> list[str]:

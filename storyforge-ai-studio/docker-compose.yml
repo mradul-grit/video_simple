@@ -35,6 +35,7 @@ services:
       DATABASE_URL: postgresql+psycopg://storyforge:storyforge_dev_only@postgres:5432/storyforge
       REDIS_URL: redis://redis:6379/0
       LOCAL_STORAGE_ROOT: /app/media_data
+      MANIFEST_SCHEMA_PATH: /schema/EDIT_MANIFEST.schema.json
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       COMFYUI_BASE_URL: http://host.docker.internal:8188
     extra_hosts:
@@ -43,7 +44,7 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
-      - ./EDIT_MANIFEST.schema.json:/app/EDIT_MANIFEST.schema.json:ro
+      - ./EDIT_MANIFEST.schema.json:/schema/EDIT_MANIFEST.schema.json:ro
       - media_data:/app/media_data
     depends_on:
       postgres:
@@ -59,13 +60,14 @@ services:
       DATABASE_URL: postgresql+psycopg://storyforge:storyforge_dev_only@postgres:5432/storyforge
       REDIS_URL: redis://redis:6379/0
       LOCAL_STORAGE_ROOT: /app/media_data
+      MANIFEST_SCHEMA_PATH: /schema/EDIT_MANIFEST.schema.json
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       COMFYUI_BASE_URL: http://host.docker.internal:8188
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./backend:/app
-      - ./EDIT_MANIFEST.schema.json:/app/EDIT_MANIFEST.schema.json:ro
+      - ./EDIT_MANIFEST.schema.json:/schema/EDIT_MANIFEST.schema.json:ro
       - media_data:/app/media_data
     depends_on:
       postgres:

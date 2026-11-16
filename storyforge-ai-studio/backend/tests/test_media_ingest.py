@@ -253,3 +253,16 @@ def test_path_traversal_is_blocked(storage_root: Path, key: str) -> None:
             _safe_path(storage_root, key)
     else:  # absolute-looking keys are re-rooted inside storage, never the real filesystem path
         assert storage_root.resolve() in resolved.parents
+
+
+def test_media_preview_url_owner_only(
+    client: TestClient, alice, bob, make_project, upload_video, sample_video: Path
+) -> None:
+    pid = make_project(alice)
+    asset = upload_video(alice, pid, sample_video)
+    url = f"/api/v1/projects/{pid}/media/{asset['id']}/preview-url"
+    r = client.post(url, headers=alice)
+    assert r.status_code == 200
+    got = client.get(r.json()["url"])
+    assert got.status_code == 200 and got.content == sample_video.read_bytes()
+    assert client.post(url, headers=bob).status_code == 404
