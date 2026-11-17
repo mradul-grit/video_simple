@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.api.deps import CurrentUser, DbSession
+from app.api.ratelimit import per_user
 from app.domain.schemas import (
     ProjectCreate,
     ProjectListResponse,
@@ -29,7 +30,12 @@ def _request_id(request: Request) -> str:
     return request.headers.get("X-Request-Id", str(uuid.uuid4()))
 
 
-@router.post("", response_model=ProjectOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=ProjectOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(per_user("projects:create"))],
+)
 def create_project_endpoint(
     body: ProjectCreate,
     request: Request,

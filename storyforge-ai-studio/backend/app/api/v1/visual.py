@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.deps import CurrentUser, DbSession
+from app.api.ratelimit import per_user
 from app.db.models import JobStatus, JobType, VisualLayout
 from app.domain.schemas import (
     JobStatusResponse,
@@ -33,7 +34,12 @@ def _assert_project(db, project_id, owner_id):
     return p
 
 
-@router.post("/visual-suggestions", response_model=JobStatusResponse, status_code=202)
+@router.post(
+    "/visual-suggestions",
+    response_model=JobStatusResponse,
+    status_code=202,
+    dependencies=[Depends(per_user("visual:enqueue"))],
+)
 def enqueue_visual_search(
     project_id: str,
     body: VisualSearchRequest,

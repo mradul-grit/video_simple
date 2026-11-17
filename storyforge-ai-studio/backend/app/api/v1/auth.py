@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.api.deps import DbSession, create_dev_token
+from app.api.ratelimit import per_ip
 from app.config import settings
 from app.db.models import User
 from app.domain.schemas import DevLoginRequest, TokenResponse
@@ -23,6 +24,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post(
     "/dev-login",
+    dependencies=[Depends(per_ip("auth:dev-login"))],
     response_model=TokenResponse,
     summary="[DEV ONLY] Issue a JWT for the given email",
     description=(

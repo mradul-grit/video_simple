@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.deps import CurrentUser, DbSession
+from app.api.ratelimit import per_user
 from app.config import settings
 from app.db.models import JobStatus
 from app.domain.schemas import (
@@ -33,7 +34,12 @@ def _assert_project(db, project_id, owner_id):
     return p
 
 
-@router.post("/projects/{project_id}/renders", response_model=RenderJobOut, status_code=202)
+@router.post(
+    "/projects/{project_id}/renders",
+    response_model=RenderJobOut,
+    status_code=202,
+    dependencies=[Depends(per_user("renders:enqueue"))],
+)
 def enqueue_render(
     project_id: str,
     body: RenderEnqueueRequest,

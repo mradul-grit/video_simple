@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.deps import CurrentUser, DbSession
+from app.api.ratelimit import per_user
 from app.db.models import JobStatus, JobType
 from app.domain.schemas import (
     AnalysisEnqueueRequest,
@@ -47,7 +48,12 @@ def _assert_project(db, project_id, owner_id):
 # ---------------------------------------------------------------------------
 
 
-@router.post("/analysis", response_model=JobStatusResponse, status_code=202)
+@router.post(
+    "/analysis",
+    response_model=JobStatusResponse,
+    status_code=202,
+    dependencies=[Depends(per_user("analysis:enqueue"))],
+)
 def enqueue_analysis(
     project_id: str,
     body: AnalysisEnqueueRequest,

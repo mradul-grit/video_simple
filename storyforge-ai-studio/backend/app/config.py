@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     max_concurrent_jobs_per_user: int = 1
     ffprobe_timeout_seconds: int = 60
 
+    # Rate limiting (fixed window). Backend: redis (shared) or memory (tests, single process).
+    rate_limit_enabled: bool = True
+    rate_limit_backend: str = "redis"
+
     # AI providers (mock = safe demo/test mode — never real output)
     transcription_provider: str = "mock"
     whisper_model: str = "small"

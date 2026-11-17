@@ -22,6 +22,7 @@ from sqlalchemy.pool import StaticPool
 
 import app.db.base as db_base
 import app.db.models  # noqa: F401  (register tables)
+from app.api import ratelimit
 from app.config import settings
 from app.db.base import Base, get_db
 from app.main import app
@@ -147,6 +148,9 @@ def client(
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
+    # In-memory rate limiter, fresh for every test (never the real Redis).
+    monkeypatch.setattr(settings, "rate_limit_backend", "memory")
+    ratelimit.reset_store()
     monkeypatch.setattr(celery_app.conf, "task_always_eager", True)
     monkeypatch.setattr(celery_app.conf, "task_eager_propagates", False)
     with TestClient(app) as c:
