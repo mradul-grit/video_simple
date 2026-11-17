@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db.models import Job, JobStatus, MediaAsset, MediaStatus
 from app.media.probe import MediaProbeError, MediaProbeTimeout, probe, validate_file_signature
+from app.services.job_state import advance
 from app.storage.local import LocalFilesystemStorage
 
 _CHUNK = 1024 * 1024
@@ -27,10 +28,7 @@ def sha256_file(path: Path) -> str:
 def _fail(db: Session, asset: MediaAsset, job: Job | None, message: str, code: str) -> None:
     asset.status = MediaStatus.failed
     if job is not None:
-        job.status = JobStatus.failed
-        job.message = message
-        job.error_code = code
-        job.progress = 100
+        advance(db, job.id, status=JobStatus.failed, message=message, error_code=code, progress=100)
     db.commit()
 
 
@@ -41,11 +39,12 @@ def validate_media_asset(
 
     Failure messages are safe to show to users (no paths or stack traces).
     """
+    if job is not None and not advance(
+        db, job.id, status=JobStatus.running, stage="validating", progress=20
+    ):
+        db.commit()
+        return asset  # cancelled before we started: leave the upload untouched
     asset.status = MediaStatus.validating
-    if job is not None:
-        job.status = JobStatus.running
-        job.stage = "validating"
-        job.progress = 20
     db.commit()
 
     key = asset.storage_key
@@ -67,10 +66,14 @@ def validate_media_asset(
         # Infrastructure problem: keep the original so validation can be retried.
         asset.status = MediaStatus.uploaded
         if job is not None:
-            job.status = JobStatus.failed
-            job.error_code = "PROBE_TIMEOUT"
-            job.message = "Checking your video took too long. Please try again in a moment."
-            job.progress = 100
+            advance(
+                db,
+                job.id,
+                status=JobStatus.failed,
+                error_code="PROBE_TIMEOUT",
+                message="Checking your video took too long. Please try again in a moment.",
+                progress=100,
+            )
         db.commit()
         return asset
     except MediaProbeError as exc:
@@ -110,11 +113,16 @@ def validate_media_asset(
     asset.orientation = meta.orientation
     asset.probe_metadata = meta.raw
     asset.status = MediaStatus.ready
-    if job is not None:
-        job.status = JobStatus.completed
-        job.stage = "completed"
-        job.progress = 100
-        job.message = "Media validated"
-        job.completed_at = datetime.now(UTC)
+    if job is not None and not advance(
+        db,
+        job.id,
+        status=JobStatus.completed,
+        stage="completed",
+        progress=100,
+        message="Media validated",
+        completed_at=datetime.now(UTC),
+    ):
+        db.rollback()  # cancelled meanwhile: keep the upload, do not mark it ready
+        asset.status = MediaStatus.uploaded
     db.commit()
     return asset

@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import CurrentUser, DbSession
+from app.api.ratelimit import per_user
 from app.config import settings
 from app.db.models import JobStatus, JobType, MediaStatus
 from app.domain.schemas import (
@@ -46,7 +47,12 @@ def _assert_project(db, project_id: str, owner_id: str):
     return project
 
 
-@router.post("/upload-url", response_model=UploadIntentResponse, status_code=201)
+@router.post(
+    "/upload-url",
+    response_model=UploadIntentResponse,
+    status_code=201,
+    dependencies=[Depends(per_user("media:upload-url"))],
+)
 def upload_intent(
     project_id: str,
     body: UploadIntentRequest,
@@ -102,16 +108,29 @@ def complete_upload(
 
     key = f"validate:{asset.id}"
     existing = get_job_by_idempotency(db, project_id, key)
-    if existing is not None and not (existing.retryable and asset.status == MediaStatus.uploaded):
+    # Re-run the same logical job after a retryable failure or a user cancel; anything else
+    # (still running, completed, permanently failed) is answered with the existing job.
+    rerun = (
+        existing is not None
+        and asset.status == MediaStatus.uploaded
+        and (existing.retryable or existing.status == JobStatus.cancelled)
+    )
+    if existing is not None and not rerun:
         return JobStatusResponse.model_validate(existing)
-
     if asset.status != MediaStatus.uploaded:
         raise HTTPException(409, f"Media asset is {asset.status.value}; upload it first.")
-
     if existing is not None:  # same logical job, next attempt
         job = existing
         update_job(
-            db, job, retry_count=job.retry_count + 1, error_code=None, message=None, progress=0
+            db,
+            job,
+            # A user cancel is not a failure, so it does not use up a retry.
+            retry_count=job.retry_count + (1 if job.status == JobStatus.failed else 0),
+            error_code=None,
+            message=None,
+            stage=None,
+            progress=0,
+            completed_at=None,
         )
     else:
         job = create_job(

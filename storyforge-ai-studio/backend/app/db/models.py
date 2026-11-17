@@ -80,7 +80,10 @@ class JobStatus(enum.StrEnum):
     retrying = "retrying"
 
 
-RETRYABLE_ERROR_CODES = frozenset({"PROBE_TIMEOUT"})
+# Failures that retrying cannot fix: the file itself is unusable.
+PERMANENT_ERROR_CODES = frozenset(
+    {"INVALID_MEDIA", "TOO_LARGE", "TOO_LONG", "NO_VIDEO", "NO_DURATION", "UPLOAD_MISSING"}
+)
 
 
 class CaptionType(enum.StrEnum):
@@ -258,10 +261,11 @@ class Job(Base):
 
     @property
     def retryable(self) -> bool:
-        """Failed for a transient reason and has retries left (exposed in job status)."""
+        """Failed for a fixable reason, of a type that can re-run, with retries left."""
         return (
             self.status == JobStatus.failed
-            and self.error_code in RETRYABLE_ERROR_CODES
+            and self.job_type in (JobType.media_validate, JobType.transcribe)
+            and self.error_code not in PERMANENT_ERROR_CODES
             and self.retry_count < self.max_retries
         )
 
