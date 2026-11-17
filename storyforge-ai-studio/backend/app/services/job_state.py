@@ -10,10 +10,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import update
+from sqlalchemy import exists, update
 from sqlalchemy.orm import Session
 
-from app.db.models import Job, JobStatus, RenderJob
+from app.db.models import Job, JobStatus, Project, ProjectStatus, RenderJob
 
 ACTIVE_STATUSES = (JobStatus.created, JobStatus.queued, JobStatus.running, JobStatus.retrying)
 
@@ -34,12 +34,23 @@ def advance(db: Session, job_id: str, **values: Any) -> bool:
     return bool(getattr(result, "rowcount", 0) == 1)
 
 
-def advance_render(db: Session, render_id: str, **values: Any) -> bool:
-    """Same rule for render jobs."""
+def advance_render(
+    db: Session, render_id: str, *, project_id: str | None = None, **values: Any
+) -> bool:
+    """Same rule for render jobs. With *project_id*, also require that project to be active.
+
+    Returns False when the render is no longer active, its row is gone, or (with
+    project_id) the project is being or has been deleted.
+    """
     values["updated_at"] = datetime.now(UTC)
+    conditions = [RenderJob.id == render_id, RenderJob.status.in_(ACTIVE_STATUSES)]
+    if project_id is not None:
+        conditions.append(
+            exists().where(Project.id == project_id, Project.status == ProjectStatus.active)
+        )
     result = db.execute(
         update(RenderJob)
-        .where(RenderJob.id == render_id, RenderJob.status.in_(ACTIVE_STATUSES))
+        .where(*conditions)
         .values(**values)
         .execution_options(synchronize_session=False)
     )

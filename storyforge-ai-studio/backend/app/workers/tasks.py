@@ -251,12 +251,22 @@ def run_visual_search(self: Task, job_id: str, project_id: str, beat_ids: list[s
 def run_render(
     self: Task, render_job_id: str, project_id: str, manifest_id: str, preset: str
 ) -> dict:
-    """Render a manifest version. Only a verified output is ever marked completed."""
+    """Render a manifest version. Only a verified output is ever marked completed.
+
+    Deletion safety (SECURITY_PRIVACY.md: deleting a project removes its exports):
+    the output is stored first and then published with one conditional UPDATE that
+    succeeds only while the render is active AND its project is active. Project
+    deletion commits `deleting` before purging storage, so either the purge removes
+    the stored file or the publish fails and the worker removes it. Every status
+    write goes through job_state, so a deleted or cancelled render never raises
+    ObjectDeletedError and never comes back to life.
+    """
     import shutil
 
     from app.db.base import SessionLocal
     from app.db.models import EditManifest, JobStatus, MediaAsset, MediaStatus
     from app.repositories.project_repo import get_render_job
+    from app.services.job_state import advance_render
     from app.services.renderer import (
         RenderError,
         SourceMedia,
@@ -265,24 +275,32 @@ def run_render(
     )
     from app.storage.factory import get_storage
 
+    class RenderAborted(Exception):
+        """The render was cancelled or its project deleted while it ran."""
+
+    stopped = {
+        "status": "cancelled",
+        "render_job_id": render_job_id,
+    }  # cancelled or project deleted
     db = SessionLocal()
-    rj = None
     try:
         rj = get_render_job(db, render_job_id)
-        if rj is None:
+        if rj is None or rj.project_id != project_id:
             return {"status": "not_found"}
         if rj.status == JobStatus.completed:
             return {"status": "completed", "render_job_id": render_job_id}  # idempotent
-
-        from app.services.job_state import advance_render
-
         if not advance_render(
-            db, render_job_id, status=JobStatus.running, stage="preparing", progress=5, message=None
+            db,
+            render_job_id,
+            project_id=project_id,
+            status=JobStatus.running,
+            stage="preparing",
+            progress=5,
+            message=None,
         ):
             db.commit()
-            return {"status": "cancelled", "render_job_id": render_job_id}
+            return stopped
         db.commit()
-        db.refresh(rj)
 
         manifest = db.get(EditManifest, manifest_id)
         if manifest is None or manifest.project_id != project_id:
@@ -304,48 +322,79 @@ def run_render(
             ):
                 raise RenderError("A source video for this edit is no longer available.")
             sources[mid] = SourceMedia(storage.get_path(asset.storage_key), bool(asset.has_audio))
+        db.commit()  # end the read transaction before the long render
 
         def progress(pct: int, stage: str) -> None:
-            rj.progress, rj.stage = pct, stage
+            ok = advance_render(db, render_job_id, project_id=project_id, progress=pct, stage=stage)
             db.commit()
+            if not ok:
+                raise RenderAborted  # render_manifest removes its temp dir on any exception
 
-        output, probe, tmpdir = render_manifest(
-            manifest_json=manifest.manifest_json,
-            sources=sources,
-            preset=preset,
-            progress_callback=progress,
-        )
         try:
-            key = f"projects/{project_id}/renders/{render_job_id}/output.mp4"
-            storage.put_file(key, output)
+            output, probe, tmpdir = render_manifest(
+                manifest_json=manifest.manifest_json,
+                sources=sources,
+                preset=preset,
+                progress_callback=progress,
+            )
+        except RenderAborted:
+            return stopped
+
+        key = f"projects/{project_id}/renders/{render_job_id}/output.mp4"
+        try:
+            storage.put_file(key, output)  # W: store ...
             size = storage.get_path(key).stat().st_size
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
-        rj.output_storage_key = key
-        rj.output_size_bytes = size
-        rj.output_duration_seconds = float(probe.get("format", {}).get("duration", 0) or 0)
-        rj.output_probe = probe
-        rj.status, rj.stage, rj.progress = JobStatus.completed, "completed", 100
-        rj.message = "Export ready"
-        rj.completed_at = datetime.now(UTC)
+        published = advance_render(  # U: ... then publish, only if render and project are active
+            db,
+            render_job_id,
+            project_id=project_id,
+            status=JobStatus.completed,
+            stage="completed",
+            progress=100,
+            message="Export ready",
+            output_storage_key=key,
+            output_size_bytes=size,
+            output_duration_seconds=float(probe.get("format", {}).get("duration", 0) or 0),
+            output_probe=probe,
+            completed_at=datetime.now(UTC),
+        )
         db.commit()
+        if not published:
+            storage.delete_object(
+                key
+            )  # deleted or cancelled meanwhile: never leave the export behind
+            return stopped
         return {"status": "completed", "render_job_id": render_job_id}
 
     except RenderError as exc:
         db.rollback()
-        if rj is not None:
-            rj.status, rj.stage, rj.message = JobStatus.failed, "failed", str(exc)
-            rj.output_storage_key = None
-            db.commit()
+        advance_render(
+            db,
+            render_job_id,
+            status=JobStatus.failed,
+            stage="failed",
+            message=str(exc),
+            output_storage_key=None,
+        )
+        db.commit()
         return {"status": "failed", "render_job_id": render_job_id}
     except Exception:
         logger.exception("run_render crashed for %s", render_job_id)
         db.rollback()
-        if rj is not None:
-            rj.status, rj.stage = JobStatus.failed, "failed"
-            rj.message = "The render failed unexpectedly. Please retry."
+        try:
+            advance_render(
+                db,
+                render_job_id,
+                status=JobStatus.failed,
+                stage="failed",
+                message="The render failed unexpectedly. Please retry.",
+            )
             db.commit()
+        except Exception:
+            logger.exception("could not mark render %s failed", render_job_id)
         return {"status": "failed", "render_job_id": render_job_id}
     finally:
         db.close()
