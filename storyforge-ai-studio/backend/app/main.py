@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import uuid
-
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api import errors
 from app.api.health import router as health_router
 from app.api.v1.analysis import router as analysis_router
 from app.api.v1.auth import router as auth_router
@@ -45,10 +44,13 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 @app.middleware("http")
 async def attach_request_id(request: Request, call_next) -> Response:
-    request_id = request.headers.get("X-Request-Id", str(uuid.uuid4()))
+    request_id = errors.request_id_for(request)
     response = await call_next(request)
     response.headers["X-Request-Id"] = request_id
     return response
+
+
+errors.install(app)
 
 
 # ---------------------------------------------------------------------------
