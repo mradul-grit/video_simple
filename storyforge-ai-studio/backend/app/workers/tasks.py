@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from celery import Task
 
@@ -47,118 +48,123 @@ def _update_job(db, job, **kwargs):
     acks_late=True,
 )
 def run_analysis(self: Task, job_id: str, project_id: str, media_asset_id: str) -> dict:
-    """Transcribe audio and run story analysis. Updates DB with results."""
+    """Transcribe, analyse and detect pauses, then store everything atomically.
+
+    Results and the `completed` status are written in one transaction, and only while
+    the job is still active: a job cancelled at any point leaves no partial results and
+    is never flipped back to `completed`.
+    """
     from app.config import settings
     from app.db.models import JobStatus
+    from app.domain.timeline import bound_items
+    from app.repositories.analysis_repo import (
+        save_cut_proposals,
+        save_editorial_captions,
+        save_story_beats,
+        save_transcript_segments,
+    )
     from app.repositories.project_repo import get_media_asset
+    from app.services.job_state import advance
+    from app.storage.factory import get_storage
 
     db, job = _get_db_and_job(job_id)
     if job is None:
         logger.error("run_analysis: job %s not found", job_id)
         return {"status": "not_found"}
 
-    try:
-        _update_job(db, job, status=JobStatus.running, stage="preparing", progress=5)
+    def step(**values: object) -> bool:
+        ok = advance(db, job_id, **values)
         db.commit()
+        return ok
+
+    try:
+        if not step(status=JobStatus.running, stage="preparing", progress=5):
+            return {"status": "cancelled", "job_id": job_id}
 
         asset = get_media_asset(db, media_asset_id)
         if asset is None or asset.storage_key is None:
             raise ValueError(f"Media asset {media_asset_id} not found or has no storage key")
+        duration = asset.duration_seconds
+        media_path = get_storage().get_path(asset.storage_key)
 
-        from app.storage.factory import get_storage
-
-        storage = get_storage()
-        media_path = storage.get_path(asset.storage_key)
-
-        # --- Transcription ---
-        _update_job(db, job, stage="transcribing", progress=20)
-        db.commit()
-
-        transcript_segments = _transcribe(media_path, project_id, media_asset_id, settings)
-
-        # --- Save transcript ---
-        from app.repositories.analysis_repo import save_transcript_segments
-
-        saved_segments = save_transcript_segments(db, project_id, transcript_segments)
-        db.commit()
-
-        # --- Story analysis ---
-        _update_job(db, job, stage="analysing", progress=55)
-        db.commit()
-
-        analysis = _analyse_story(transcript_segments, settings)
-
-        # Attach project and segment IDs to beats/cuts/captions
-        seg_id_map = {s.sequence: s.id for s in saved_segments}
-
-        from app.repositories.analysis_repo import (
-            save_cut_proposals,
-            save_editorial_captions,
-            save_story_beats,
+        if not step(stage="transcribing", progress=20):
+            return {"status": "cancelled", "job_id": job_id}
+        segments = bound_items(
+            _transcribe(media_path, project_id, media_asset_id, settings, duration), duration
         )
+        for i, seg in enumerate(segments):
+            seg["sequence"], seg["media_asset_id"] = i, media_asset_id
 
-        beats_data = []
-        for b in analysis.get("beats", []):
-            seg_ids = [seg_id_map[i] for i in b.get("segment_sequences", []) if i in seg_id_map]
-            beats_data.append({**b, "transcript_segment_ids": seg_ids})
-        save_story_beats(db, project_id, beats_data)
+        if not step(stage="analysing", progress=55):
+            return {"status": "cancelled", "job_id": job_id}
+        analysis = _analyse_story(segments, settings)
 
-        # Pause cuts come from the measured audio, never from the language model.
-        cuts_data = []
-        if asset.has_audio and asset.duration_seconds:
+        pause_cuts: list[dict] = []
+        if asset.has_audio and duration:
             from app.media.pauses import detect_pauses, pause_cut_proposals
 
-            _update_job(db, job, stage="detecting_pauses", progress=75)
-            db.commit()
-            pauses = detect_pauses(media_path, asset.duration_seconds)
-            for c in pause_cut_proposals(pauses, asset.duration_seconds):
-                cuts_data.append({**c, "media_asset_id": media_asset_id})
-        for c in analysis.get("cuts", []):
-            if c.get("cut_type") != "filler":
-                continue  # only filler-word cuts may come from the language model
-            seg_ids = [seg_id_map[i] for i in c.get("segment_sequences", []) if i in seg_id_map]
-            cuts_data.append(
-                {**c, "media_asset_id": media_asset_id, "transcript_segment_ids": seg_ids}
-            )
-        save_cut_proposals(db, project_id, cuts_data)
+            if not step(stage="detecting_pauses", progress=75):
+                return {"status": "cancelled", "job_id": job_id}
+            pause_cuts = pause_cut_proposals(detect_pauses(media_path, duration), duration)
 
-        captions_data = []
-        for cap in analysis.get("captions", []):
-            seg_ids = [seg_id_map[i] for i in cap.get("segment_sequences", []) if i in seg_id_map]
-            low_conf = not seg_ids or cap.get("confidence", 1.0) < 0.6
-            captions_data.append(
-                {**cap, "transcript_segment_ids": seg_ids, "low_confidence": low_conf}
-            )
-        save_editorial_captions(db, project_id, captions_data)
+        # --- one transaction: results + completion, only if still active ---
+        saved = save_transcript_segments(db, project_id, segments)
+        seg_ids = {s.sequence: s.id for s in saved}
 
-        db.commit()
+        def cite(item: dict) -> list[str]:
+            return [seg_ids[i] for i in item.get("segment_sequences", []) if i in seg_ids]
 
-        _update_job(
+        save_story_beats(
             db,
-            job,
+            project_id,
+            [
+                {**b, "transcript_segment_ids": cite(b)}
+                for b in bound_items(analysis.get("beats", []), duration)
+            ],
+        )
+        cuts = [{**c, "media_asset_id": media_asset_id} for c in pause_cuts]
+        # Pause cuts come from the measured audio; the language model may only add filler cuts.
+        for c in bound_items(analysis.get("cuts", []), duration):
+            if c.get("cut_type") == "filler":
+                cuts.append(
+                    {**c, "media_asset_id": media_asset_id, "transcript_segment_ids": cite(c)}
+                )
+        save_cut_proposals(db, project_id, cuts)
+        captions = []
+        for cap in bound_items(analysis.get("captions", []), duration):
+            cited = cite(cap)
+            low = not cited or cap.get("confidence", 1.0) < 0.6
+            captions.append({**cap, "transcript_segment_ids": cited, "low_confidence": low})
+        save_editorial_captions(db, project_id, captions)
+
+        if not advance(
+            db,
+            job_id,
             status=JobStatus.completed,
             stage="completed",
             progress=100,
             message="Analysis complete",
             completed_at=datetime.now(UTC),
-        )
+        ):
+            db.rollback()  # cancelled while we worked: keep the previous results untouched
+            return {"status": "cancelled", "job_id": job_id}
         db.commit()
-
     except Exception:
         logger.exception("run_analysis failed for job %s", job_id)
+        db.rollback()
         try:
             from app.db.models import JobStatus as JS
 
-            _update_job(
+            advance(
                 db,
-                job,
+                job_id,
                 status=JS.failed,
                 message="Analysis failed. Please retry.",
                 error_code="ANALYSIS_ERROR",
             )
             db.commit()
         except Exception:
-            pass
+            logger.exception("could not mark job %s failed", job_id)
         raise
     finally:
         db.close()
@@ -189,7 +195,11 @@ def run_visual_search(self: Task, job_id: str, project_id: str, beat_ids: list[s
         return {"status": "not_found"}
 
     try:
-        _update_job(db, job, status=JobStatus.running, stage="searching", progress=10)
+        from app.services.job_state import advance
+
+        if not advance(db, job_id, status=JobStatus.running, stage="searching", progress=10):
+            db.commit()
+            return {"status": "cancelled", "job_id": job_id}
         db.commit()
 
         suggestions = []
@@ -203,17 +213,17 @@ def run_visual_search(self: Task, job_id: str, project_id: str, beat_ids: list[s
             suggestions.extend(results)
 
         save_visual_suggestions(db, project_id, suggestions)
-        db.commit()
-
-        _update_job(
+        if not advance(
             db,
-            job,
+            job_id,
             status=JobStatus.completed,
             stage="completed",
             progress=100,
             message=f"Found {len(suggestions)} visual candidates",
             completed_at=datetime.now(UTC),
-        )
+        ):
+            db.rollback()
+            return {"status": "cancelled", "job_id": job_id}
         db.commit()
 
     except Exception:
@@ -264,8 +274,15 @@ def run_render(
         if rj.status == JobStatus.completed:
             return {"status": "completed", "render_job_id": render_job_id}  # idempotent
 
-        rj.status, rj.stage, rj.progress, rj.message = JobStatus.running, "preparing", 5, None
+        from app.services.job_state import advance_render
+
+        if not advance_render(
+            db, render_job_id, status=JobStatus.running, stage="preparing", progress=5, message=None
+        ):
+            db.commit()
+            return {"status": "cancelled", "render_job_id": render_job_id}
         db.commit()
+        db.refresh(rj)
 
         manifest = db.get(EditManifest, manifest_id)
         if manifest is None or manifest.project_id != project_id:
@@ -350,26 +367,30 @@ def scaffold_health_task(self: Task) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _transcribe(media_path: Path, project_id: str, media_asset_id: str, settings) -> list[dict]:
+def _transcribe(
+    media_path: Path, project_id: str, media_asset_id: str, settings, duration: float | None = None
+) -> list[dict]:
     """Return transcript segments. Uses real Faster-Whisper or mock provider."""
     if settings.transcription_provider == "mock":
-        return _mock_transcript(media_asset_id)
+        return _mock_transcript(media_asset_id, duration)
     elif settings.transcription_provider == "faster_whisper":
         return _whisper_transcribe(media_path, settings)
     else:
         logger.warning(
             "Unknown transcription provider %s, using mock", settings.transcription_provider
         )
-        return _mock_transcript(media_asset_id)
+        return _mock_transcript(media_asset_id, duration)
 
 
-def _mock_transcript(media_asset_id: str) -> list[dict]:
+def _mock_transcript(media_asset_id: str, duration: float | None = None) -> list[dict]:
     """
     DEMO DATA — clearly labelled as mock output.
     This is returned when transcription_provider=mock.
     Not real transcription output.
     """
-    return [
+    # The demo script spans 25 s; squeeze it into shorter clips so nothing passes the end.
+    scale = min(1.0, duration / 25.0) if duration else 1.0
+    segments: list[dict[str, Any]] = [
         {
             "sequence": 0,
             "start_seconds": 0.0,
@@ -421,6 +442,10 @@ def _mock_transcript(media_asset_id: str) -> list[dict]:
             "media_asset_id": media_asset_id,
         },
     ]
+    for seg in segments:
+        seg["start_seconds"] = round(seg["start_seconds"] * scale, 3)
+        seg["end_seconds"] = round(seg["end_seconds"] * scale, 3)
+    return segments
 
 
 def _whisper_transcribe(media_path: Path, settings) -> list[dict]:

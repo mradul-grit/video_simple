@@ -12,6 +12,7 @@ from app.db.models import (
     TranscriptSegment,
     VisualSuggestion,
 )
+from app.domain.timeline import overlap_ratio
 
 # ---------------------------------------------------------------------------
 # Transcript
@@ -21,28 +22,37 @@ from app.db.models import (
 def save_transcript_segments(
     db: Session, project_id: str, segments: list[dict]
 ) -> list[TranscriptSegment]:
-    # Delete existing segments for this project before saving new ones
-    existing = db.query(TranscriptSegment).filter(TranscriptSegment.project_id == project_id).all()
-    for s in existing:
-        db.delete(s)
-    db.flush()
+    """Replace the transcript, reusing a row's id when start, end and text are unchanged.
 
-    rows = []
+    Stable ids keep editorial captions and saved manifests that cite segments valid
+    across a re-analysis that produces the same speech.
+    """
+
+    def key(start: float, end: float, text: str) -> tuple[float, float, str]:
+        return (round(start, 2), round(end, 2), text.strip())
+
+    existing = {
+        key(s.start_seconds, s.end_seconds, s.text): s
+        for s in db.query(TranscriptSegment).filter(TranscriptSegment.project_id == project_id)
+    }
+    rows: list[TranscriptSegment] = []
     for seg in segments:
-        row = TranscriptSegment(
-            project_id=project_id,
-            media_asset_id=seg["media_asset_id"],
-            sequence=seg["sequence"],
-            start_seconds=seg["start_seconds"],
-            end_seconds=seg["end_seconds"],
-            text=seg["text"],
-            language=seg.get("language"),
-            confidence=seg.get("confidence"),
-            is_speech=seg.get("is_speech", True),
-            words=seg.get("words"),
-        )
-        db.add(row)
+        row = existing.pop(key(seg["start_seconds"], seg["end_seconds"], seg["text"]), None)
+        if row is None:
+            row = TranscriptSegment(project_id=project_id)
+            db.add(row)
+        row.media_asset_id = seg["media_asset_id"]
+        row.sequence = seg["sequence"]
+        row.start_seconds = seg["start_seconds"]
+        row.end_seconds = seg["end_seconds"]
+        row.text = seg["text"]
+        row.language = seg.get("language")
+        row.confidence = seg.get("confidence")
+        row.is_speech = seg.get("is_speech", True)
+        row.words = seg.get("words")
         rows.append(row)
+    for stale in existing.values():
+        db.delete(stale)
     db.flush()
     return rows
 
@@ -106,25 +116,46 @@ def get_story_beat(db: Session, beat_id: str, project_id: str) -> StoryBeat | No
 
 
 def save_cut_proposals(db: Session, project_id: str, proposals: list[dict]) -> list[CutProposal]:
-    existing = db.query(CutProposal).filter(CutProposal.project_id == project_id).all()
-    for p in existing:
-        db.delete(p)
-    db.flush()
+    """Merge new proposals into existing ones without touching anything the user reviewed.
 
-    rows = []
-    for prop in proposals:
-        row = CutProposal(
-            project_id=project_id,
-            media_asset_id=prop["media_asset_id"],
-            start_seconds=prop["start_seconds"],
-            end_seconds=prop["end_seconds"],
-            reason=prop["reason"],
-            cut_type=prop["cut_type"],
-            confidence=prop["confidence"],
-            transcript_segment_ids=prop.get("transcript_segment_ids", []),
+    - A reviewed cut (accepted or rejected, possibly with adjusted bounds) is kept as is.
+    - An unreviewed cut matching a new proposal (same type, >= 50% overlap) is updated
+      in place, so its id is stable.
+    - Unreviewed cuts with no match are removed; unmatched new proposals are added.
+    """
+    existing = list(db.query(CutProposal).filter(CutProposal.project_id == project_id))
+    reviewed = [c for c in existing if c.accepted is not None]
+    unreviewed = [c for c in existing if c.accepted is None]
+
+    def matches(c: CutProposal, prop: dict) -> bool:
+        return (
+            c.cut_type == prop["cut_type"]
+            and overlap_ratio(
+                c.start_seconds, c.end_seconds, prop["start_seconds"], prop["end_seconds"]
+            )
+            >= 0.5
         )
-        db.add(row)
+
+    rows: list[CutProposal] = list(reviewed)
+    for prop in proposals:
+        if any(matches(c, prop) for c in reviewed):
+            continue  # the user already decided on this cut
+        row = next((c for c in unreviewed if matches(c, prop)), None)
+        if row is not None:
+            unreviewed.remove(row)
+        else:
+            row = CutProposal(project_id=project_id)
+            db.add(row)
+        row.media_asset_id = prop["media_asset_id"]
+        row.start_seconds = prop["start_seconds"]
+        row.end_seconds = prop["end_seconds"]
+        row.reason = prop["reason"]
+        row.cut_type = prop["cut_type"]
+        row.confidence = prop["confidence"]
+        row.transcript_segment_ids = prop.get("transcript_segment_ids", [])
         rows.append(row)
+    for stale in unreviewed:
+        db.delete(stale)
     db.flush()
     return rows
 
@@ -171,13 +202,30 @@ def review_cut_proposal(
 def save_editorial_captions(
     db: Session, project_id: str, captions: list[dict]
 ) -> list[EditorialCaption]:
-    existing = db.query(EditorialCaption).filter(EditorialCaption.project_id == project_id).all()
-    for c in existing:
-        db.delete(c)
-    db.flush()
+    """Replace suggested captions but keep every caption the user accepted, rejected or edited.
 
-    rows = []
+    A kept caption whose cited segments no longer exist is flagged for review.
+    """
+    existing = list(db.query(EditorialCaption).filter(EditorialCaption.project_id == project_id))
+    kept = [c for c in existing if c.accepted is not None or c.edited_text]
+    live_segments = {
+        s.id
+        for s in db.query(TranscriptSegment.id).filter(TranscriptSegment.project_id == project_id)
+    }
+    for c in existing:
+        if c not in kept:
+            db.delete(c)
+    for c in kept:
+        if not set(c.transcript_segment_ids or []) <= live_segments:
+            c.low_confidence = True
+    rows: list[EditorialCaption] = list(kept)
     for cap in captions:
+        if any(
+            overlap_ratio(c.start_seconds, c.end_seconds, cap["start_seconds"], cap["end_seconds"])
+            >= 0.5
+            for c in kept
+        ):
+            continue  # the user's version of this caption wins
         row = EditorialCaption(
             project_id=project_id,
             sequence=cap["sequence"],
